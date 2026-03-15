@@ -1,4 +1,3 @@
-#
 # Copyright (C) 2023, Inria
 # GRAPHDECO research group, https://team.inria.fr/graphdeco
 # All rights reserved.
@@ -20,21 +19,28 @@ set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
 
 add_library(CudaRasterizer
-	cuda_rasterizer/forward.h
-	cuda_rasterizer/forward.cu
-	cuda_rasterizer/auxiliary.h
-	cuda_rasterizer/rasterizer_impl.cu
-	cuda_rasterizer/rasterizer_impl.h
-	cuda_rasterizer/rasterizer.h
+    cuda_rasterizer/forward.h
+    cuda_rasterizer/forward.cu
+    cuda_rasterizer/auxiliary.h
+    cuda_rasterizer/rasterizer_impl.cu
+    cuda_rasterizer/rasterizer_impl.h
+    cuda_rasterizer/rasterizer.h
 )
 
-# Suppress warnings and notes for C++
-add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-w>)
+if(DEFINED CMAKE_CUDA_ARCHITECTURES AND NOT "${CMAKE_CUDA_ARCHITECTURES}" STREQUAL "")
+    set(_gs2pc_raster_cuda_architectures "${CMAKE_CUDA_ARCHITECTURES}")
+else()
+    set(_gs2pc_raster_cuda_architectures "70;75;86")
+endif()
 
-# Suppress warnings and notes for CUDA
-add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:--disable-warnings>)
+set_target_properties(CudaRasterizer PROPERTIES CUDA_ARCHITECTURES "${_gs2pc_raster_cuda_architectures}")
 
-set_target_properties(CudaRasterizer PROPERTIES CUDA_ARCHITECTURES "70;75;86")
+target_compile_options(CudaRasterizer PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-w>)
+target_compile_options(CudaRasterizer PRIVATE
+    $<$<COMPILE_LANGUAGE:CUDA>:--disable-warnings>
+    $<$<COMPILE_LANGUAGE:CUDA>:-Wno-deprecated-gpu-targets>
+    $<$<COMPILE_LANGUAGE:CUDA>:-diag-suppress=221>
+)
 
 target_include_directories(CudaRasterizer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/cuda_rasterizer)
 target_include_directories(CudaRasterizer PRIVATE third_party/glm ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})

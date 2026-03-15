@@ -1,5 +1,23 @@
 cmake_minimum_required(VERSION 3.8...3.31)
 
+if(WIN32)
+    set(_gs2pc_msvc_bin_root
+        "C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.44.35207/bin")
+    set(_gs2pc_msvc_x64_cl "${_gs2pc_msvc_bin_root}/Hostx64/x64/cl.exe")
+
+    if(EXISTS "${_gs2pc_msvc_x64_cl}")
+        if(NOT DEFINED CMAKE_C_COMPILER)
+            set(CMAKE_C_COMPILER "${_gs2pc_msvc_x64_cl}" CACHE FILEPATH "Preferred MSVC x64 C compiler" FORCE)
+        endif()
+        if(NOT DEFINED CMAKE_CXX_COMPILER)
+            set(CMAKE_CXX_COMPILER "${_gs2pc_msvc_x64_cl}" CACHE FILEPATH "Preferred MSVC x64 CXX compiler" FORCE)
+        endif()
+        if(NOT DEFINED CMAKE_CUDA_HOST_COMPILER)
+            set(CMAKE_CUDA_HOST_COMPILER "${_gs2pc_msvc_x64_cl}" CACHE FILEPATH "CUDA host compiler" FORCE)
+        endif()
+    endif()
+endif()
+
 project(gs2pc_native LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -33,14 +51,13 @@ endfunction()
 
 set(GS2PC_CUDA_RASTER_AVAILABLE OFF)
 if(GS2PC_ENABLE_CUDA_RASTER)
-    if(WIN32 AND MSVC AND NOT DEFINED CMAKE_CUDA_HOST_COMPILER)
-        set(_gs2pc_default_host_cl
-            "C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64")
-        if(EXISTS "${_gs2pc_default_host_cl}")
-            set(CMAKE_CUDA_HOST_COMPILER "${_gs2pc_default_host_cl}" CACHE PATH "CUDA host compiler" FORCE)
-            message(STATUS "GS2PC: defaulting CMAKE_CUDA_HOST_COMPILER to ${CMAKE_CUDA_HOST_COMPILER}")
+    if(WIN32 AND MSVC)
+        if(DEFINED CMAKE_CXX_COMPILER)
+            message(STATUS "GS2PC: using CMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}")
         endif()
-        unset(_gs2pc_default_host_cl)
+        if(DEFINED CMAKE_CUDA_HOST_COMPILER)
+            message(STATUS "GS2PC: using CMAKE_CUDA_HOST_COMPILER=${CMAKE_CUDA_HOST_COMPILER}")
+        endif()
     endif()
 
     include(CheckLanguage)

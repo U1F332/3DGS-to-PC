@@ -246,12 +246,15 @@ int main(int argc, const char* const argv[]) {
             std::cout << "Loaded camera frames: " << camera_frames.size() << " from "
                       << options.transform_path->string() << '\n';
         }
+    }
 
-        if (!camera_frames.empty() && gaussians.has_sh_coefficients) {
-            ApplyShColourFromCameras(gaussians, camera_frames, options.max_sh_degree);
-            if (!options.quiet) {
-                std::cout << "Applied camera-aware SH colour averaging using loaded camera frames\n";
-            }
+    const bool auto_forward_colours = options.render_colours && !camera_frames.empty() && gs2pc::HasCudaRasterizer();
+    const bool run_forward_pass = options.run_forward || auto_forward_colours;
+
+    if (options.render_colours && !auto_forward_colours && !camera_frames.empty() && gaussians.has_sh_coefficients) {
+        ApplyShColourFromCameras(gaussians, camera_frames, options.max_sh_degree);
+        if (!options.quiet) {
+            std::cout << "Applied camera-aware SH colour averaging using loaded camera frames\n";
         }
     }
 
@@ -315,7 +318,7 @@ int main(int argc, const char* const argv[]) {
         }
     }
 
-    if (options.run_forward) {
+    if (run_forward_pass) {
         if (!gs2pc::HasCudaRasterizer()) {
             std::cerr << "Error: this build does not include CUDA raster support; reconfigure with "
                          "GS2PC_ENABLE_CUDA_RASTER=ON\n";
@@ -442,6 +445,9 @@ int main(int argc, const char* const argv[]) {
                 max_value = *std::max_element(max_contrib.begin(), max_contrib.end());
             }
             const double total_value = std::accumulate(total_contrib.begin(), total_contrib.end(), 0.0);
+            if (auto_forward_colours && !options.run_forward) {
+                std::cout << "Applied CUDA forward colour extraction over " << forward_cameras.size() << " camera(s)\n";
+            }
             std::cout << "forward completed over " << forward_cameras.size()
                       << " camera(s). rendered instances sum: " << total_rendered_instances << '\n';
             std::cout << "forward gauss contribution sum/max: " << total_value << " / " << max_value << '\n';

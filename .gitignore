@@ -178,3 +178,4 @@ pyrightconfig.json
 *.ply
 *.png
 set/
+cpp_native/build*/

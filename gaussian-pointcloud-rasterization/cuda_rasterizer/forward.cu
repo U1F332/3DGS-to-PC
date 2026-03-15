@@ -380,7 +380,7 @@ renderCUDA(
 			collected_conic_opacity[block.thread_rank()] = conic_opacity[coll_id];
 
 			largest_collected_contributions[block.thread_rank()] = 0.0f;
-			largest_collected_contribution_pixel[block.thread_rank()] = -1;
+			largest_collected_contribution_pixel[block.thread_rank()] = static_cast<uint32_t>(-1);
 
 			smallest_collected_surface_distance[block.thread_rank()] = FLOAT_MAX;
 		}
