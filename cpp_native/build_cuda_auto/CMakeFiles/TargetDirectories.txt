@@ -1,8 +1,0 @@
-C:/WS/Test/GS2PC/cpp_native/build_cuda_auto/CMakeFiles/gs2pc_core.dir
-C:/WS/Test/GS2PC/cpp_native/build_cuda_auto/CMakeFiles/gs2pc_cli.dir
-C:/WS/Test/GS2PC/cpp_native/build_cuda_auto/CMakeFiles/gs2pc_format.dir
-C:/WS/Test/GS2PC/cpp_native/build_cuda_auto/CMakeFiles/edit_cache.dir
-C:/WS/Test/GS2PC/cpp_native/build_cuda_auto/CMakeFiles/rebuild_cache.dir
-C:/WS/Test/GS2PC/cpp_native/build_cuda_auto/gaussian-pointcloud-rasterization/CMakeFiles/CudaRasterizer.dir
-C:/WS/Test/GS2PC/cpp_native/build_cuda_auto/gaussian-pointcloud-rasterization/CMakeFiles/edit_cache.dir
-C:/WS/Test/GS2PC/cpp_native/build_cuda_auto/gaussian-pointcloud-rasterization/CMakeFiles/rebuild_cache.dir

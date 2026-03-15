@@ -178,4 +178,29 @@ pyrightconfig.json
 *.ply
 *.png
 set/
+
+# CMake build directories
 cpp_native/build*/
+build*/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+*.ninja_deps
+*.ninja_log
+build.ninja
+
+# MSVC / Visual Studio
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+*.sln
+x64/
+.vs/
+
+# Compiled binaries and link artifacts
+*.exe
+*.ilk
+*.pdb
+*.lib
+*.exp
+*.obj
