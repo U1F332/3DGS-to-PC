@@ -1,31 +1,66 @@
-# CHANGELOG — 3DGS-to-PC (简洁说明)
+# Changelog
 
-概述
-- 将仓库核心从 Python/Torch 向原生 C++/CUDA（`cpp_native/`）迁移的工作已进行。此变更集整理并保留了实际代码改动，清理了临时与迁移文档。
+## Current repository status
 
-主要改动
-- 新增：`cpp_native/` 原生实现骨架（包含 `include/gs2pc/*.h`、`src/*/*.cpp`、CMake 配置与最小 CLI）。
-- 新增：原生 `markVisible` 与 `forward` 封装，可使用 COLMAP 相机驱动进行可见性与贡献统计。
-- 改进：支持读取真实 Gaussian PLY / SPLAT 输入字段（位置、尺度、旋转、不透明度、SH 等）；支持 COLMAP 相机文件（`.bin`/`.txt`）。
-- 改进：增加 `visibility_threshold`、`surface_distance_std` 等筛选策略，并可按 `--num_points` / `--exact_num_points` 导出点云。
-- 文档：移除多份临时/迁移用文档（已整合为本 `CHANGELOG.md`）。
+This repository currently contains two main conversion paths for turning 3D Gaussian Splatting data into point clouds:
 
-清理
-- 删除了若干迁移说明文件与命令输出残留文件（这些文件为临时草稿或误保存的命令输出）。
-- 保留并提交 `cpp_native/build*`（你指定保留 build 输出）。
+- A Python workflow centered around `gauss_to_pc.py` and its supporting loaders, render helpers, and mesh utilities.
+- A native C++20 scaffold in `cpp_native/` with a small CLI, Gaussian loaders, COLMAP camera loading, point-cloud conversion, PLY export, and optional CUDA raster diagnostic hooks.
 
-注意事项与后续工作
-- 本次提交将包含大量原生源文件与部分构建产物。请在推送远端前确认是否需要将二进制/构建文件加入版本控制（通常不推荐，但按你要求保留）。
-- 建议后续添加或更新 `.gitignore` 以明确哪些构建产物应保留或忽略。
-- 若需要，我可以：
-  - 生成推荐的 `.gitignore` 并提交；
-  - 将 build 文件移动到单独的目录并添加说明；
-  - 或按你的要求把 build 文件从提交中排除。
+## What is present in the repository
 
-简短历史记录（要点）
-- 实现了从高斯输入到点云导出的纯 C++ 最小链路，包含相机加载、可见性标记、forward 聚合与点云导出。
+### Python pipeline
+
+- `gauss_to_pc.py` is the main Python entry point for generating dense point clouds from Gaussian scene files.
+- The Python flow supports loading Gaussian data from `.ply` and `.splat` inputs.
+- Camera and transform data can be loaded through `transform_dataloader.py`.
+- Optional mask loading is provided by `mask_dataloader.py`.
+- Rendering integration is handled through `gauss_render.py` and camera helpers in `camera_handler.py`.
+- Gaussian parsing and PLY export helpers are implemented in `gauss_dataloader.py`.
+- Optional mesh-related processing is provided by `mesh_handler.py`.
+
+### Native C++ pipeline
+
+- `cpp_native/` builds a C++20 native implementation with CMake.
+- The native target defines a reusable core library `gs2pc_core` and a CLI executable `gs2pc_cli`.
+- The CLI accepts conversion-oriented arguments such as input path, output path, transform path, point count, SH degree, visibility threshold, opacity filtering, bounding box filtering, and colour quality.
+- Native Gaussian loading supports:
+  - binary `.splat` input
+  - ASCII and binary little-endian `.ply` input
+  - detection of point-cloud PLY versus Gaussian PLY layouts
+- The native loader reads practical Gaussian attributes from repository-supported inputs, including:
+  - position
+  - scale
+  - rotation
+  - opacity
+  - RGB colour
+  - normals when present
+  - SH coefficients when present in PLY input
+- Native camera loading supports COLMAP text and binary camera/image files.
+- Native conversion can filter by opacity, bounding box, and Gaussian size culling ratio.
+- Native point generation distributes samples across Gaussians and exports ASCII PLY point clouds.
+- Native export preserves normals when available.
+
+### CUDA-related native diagnostics
+
+- `cpp_native/` includes optional CUDA raster integration controlled by `GS2PC_ENABLE_CUDA_RASTER`.
+- When enabled and available, the native CLI can run:
+  - `markVisible` diagnostics
+  - forward raster diagnostics
+- These paths are implemented as optional wrappers and the build falls back cleanly when CUDA raster support is not enabled.
+
+## Build configuration in the repository
+
+- The native code uses CMake with a required minimum version of `3.8`.
+- The native project is configured for `C++20`.
+- CUDA raster support is optional rather than mandatory.
+- A `clang-format` target is generated when `clang-format` is available.
+
+## Notes
+
+- This changelog was rewritten in English to match the repository's current checked-in contents rather than an earlier migration summary.
+- It describes the actual code and build structure currently present in the workspace.
 
 ---
 
-生成者：仓库维护整理（自动化摘要）
-日期：2026-03-15
+Updated: 2026-03-15

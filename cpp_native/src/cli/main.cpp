@@ -5,6 +5,8 @@
 #include "gs2pc/raster.h"
 
 #include <algorithm>
+#include <array>
+#include <cmath>
 #include <cstddef>
 #include <iostream>
 #include <limits>
@@ -12,6 +14,17 @@
 #include <vector>
 
 namespace {
+
+constexpr float kShC0 = 0.28209479177387814f;
+constexpr float kShC1 = 0.4886025119029199f;
+constexpr std::array<float, 5> kShC2 = {1.0925484305920792f, -1.0925484305920792f, 0.31539156525252005f,
+                                        -1.0925484305920792f, 0.5462742152960396f};
+constexpr std::array<float, 7> kShC3 = {-0.5900435899266435f, 2.890611442640554f,  -0.4570457994644658f,
+                                        0.3731763325901154f, -0.4570457994644658f, 1.445305721320277f,
+                                        -0.5900435899266435f};
+constexpr std::array<float, 9> kShC4 = {2.5033429417967046f,  -1.7701307697799304f, 0.9461746957575601f,
+                                        -0.6690465435572892f, 0.10578554691520431f, -0.6690465435572892f,
+                                        0.47308734787878004f, -1.7701307697799304f, 0.6258357354491761f};
 
 gs2pc::GaussianSet FilterVisibleGaussians(const gs2pc::GaussianSet& source, const std::vector<bool>& present) {
     gs2pc::GaussianSet filtered;
@@ -67,6 +80,126 @@ float SafeChannel(float v) {
     return v;
 }
 
+float Dot(const gs2pc::Vec3f& a, const gs2pc::Vec3f& b) {
+    return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+gs2pc::Vec3f Normalize(const gs2pc::Vec3f& v) {
+    const float n = std::sqrt(std::max(Dot(v, v), 0.0f));
+    if (n <= std::numeric_limits<float>::epsilon()) {
+        return {0.0f, 0.0f, 1.0f};
+    }
+    return {v.x / n, v.y / n, v.z / n};
+}
+
+gs2pc::Vec3f DirectionToCamera(const gs2pc::Gaussian& gaussian, const gs2pc::CameraState& camera) {
+    return Normalize({gaussian.position.x - camera.pose.camera_pos.x, gaussian.position.y - camera.pose.camera_pos.y,
+                      gaussian.position.z - camera.pose.camera_pos.z});
+}
+
+std::array<float, 3> EvalShColour(const gs2pc::Gaussian& gaussian, int max_degree, const gs2pc::Vec3f& dir) {
+    if (gaussian.sh_coefficients.size() < 3) {
+        return gaussian.color;
+    }
+
+    const int degree = std::clamp(max_degree, 0, 4);
+    const int coeff_count = (degree + 1) * (degree + 1);
+    const int required_coeffs = coeff_count * 3;
+    if (static_cast<int>(gaussian.sh_coefficients.size()) < required_coeffs) {
+        return gaussian.color;
+    }
+
+    auto eval_channel = [&](int channel) {
+        float result = 0.0f;
+        const auto coeff_at = [&](int coeff_index) -> float {
+            if (coeff_index == 0) {
+                return gaussian.sh_coefficients[static_cast<std::size_t>(channel)];
+            }
+
+            const std::size_t base = 3 + static_cast<std::size_t>(coeff_index - 1) * 3;
+            const std::size_t flat_index = base + static_cast<std::size_t>(channel);
+            if (flat_index >= gaussian.sh_coefficients.size()) {
+                return 0.0f;
+            }
+            return gaussian.sh_coefficients[flat_index];
+        };
+
+        const float x = dir.x;
+        const float y = dir.y;
+        const float z = dir.z;
+        const float xx = x * x;
+        const float yy = y * y;
+        const float zz = z * z;
+        const float xy = x * y;
+        const float yz = y * z;
+        const float xz = x * z;
+
+        result = kShC0 * coeff_at(0);
+
+        if (degree > 0) {
+            result += -kShC1 * y * coeff_at(1);
+            result += kShC1 * z * coeff_at(2);
+            result += -kShC1 * x * coeff_at(3);
+        }
+        if (degree > 1) {
+            result += kShC2[0] * xy * coeff_at(4);
+            result += kShC2[1] * yz * coeff_at(5);
+            result += kShC2[2] * (2.0f * zz - xx - yy) * coeff_at(6);
+            result += kShC2[3] * xz * coeff_at(7);
+            result += kShC2[4] * (xx - yy) * coeff_at(8);
+        }
+        if (degree > 2) {
+            result += kShC3[0] * y * (3.0f * xx - yy) * coeff_at(9);
+            result += kShC3[1] * xy * z * coeff_at(10);
+            result += kShC3[2] * y * (4.0f * zz - xx - yy) * coeff_at(11);
+            result += kShC3[3] * z * (2.0f * zz - 3.0f * xx - 3.0f * yy) * coeff_at(12);
+            result += kShC3[4] * x * (4.0f * zz - xx - yy) * coeff_at(13);
+            result += kShC3[5] * z * (xx - yy) * coeff_at(14);
+            result += kShC3[6] * x * (xx - 3.0f * yy) * coeff_at(15);
+        }
+        if (degree > 3) {
+            result += kShC4[0] * xy * (xx - yy) * coeff_at(16);
+            result += kShC4[1] * yz * (3.0f * xx - yy) * coeff_at(17);
+            result += kShC4[2] * xy * (7.0f * zz - 1.0f) * coeff_at(18);
+            result += kShC4[3] * yz * (7.0f * zz - 3.0f) * coeff_at(19);
+            result += kShC4[4] * (zz * (35.0f * zz - 30.0f) + 3.0f) * coeff_at(20);
+            result += kShC4[5] * xz * (7.0f * zz - 3.0f) * coeff_at(21);
+            result += kShC4[6] * (xx - yy) * (7.0f * zz - 1.0f) * coeff_at(22);
+            result += kShC4[7] * xz * (xx - 3.0f * yy) * coeff_at(23);
+            result += kShC4[8] * (xx * (xx - 3.0f * yy) - yy * (3.0f * xx - yy)) * coeff_at(24);
+        }
+
+        return SafeChannel(result + 0.5f);
+    };
+
+    return {eval_channel(0), eval_channel(1), eval_channel(2)};
+}
+
+void ApplyShColourFromCameras(gs2pc::GaussianSet& gaussians, const std::vector<gs2pc::CameraFrame>& camera_frames,
+                              int max_sh_degree) {
+    if (gaussians.items.empty() || camera_frames.empty() || !gaussians.has_sh_coefficients) {
+        return;
+    }
+
+    for (auto& gaussian : gaussians.items) {
+        if (gaussian.sh_coefficients.size() < 3) {
+            continue;
+        }
+
+        std::array<float, 3> accum = {0.0f, 0.0f, 0.0f};
+        for (const auto& frame : camera_frames) {
+            const auto dir = DirectionToCamera(gaussian, frame.state);
+            const auto c = EvalShColour(gaussian, max_sh_degree, dir);
+            accum[0] += c[0];
+            accum[1] += c[1];
+            accum[2] += c[2];
+        }
+
+        const float inv = 1.0f / static_cast<float>(camera_frames.size());
+        gaussian.color = {SafeChannel(accum[0] * inv), SafeChannel(accum[1] * inv), SafeChannel(accum[2] * inv)};
+    }
+}
+
 } // namespace
 
 int main(int argc, const char* const argv[]) {
@@ -102,7 +235,7 @@ int main(int argc, const char* const argv[]) {
     }
 
     std::vector<gs2pc::CameraFrame> camera_frames;
-    if ((options.run_mark_visible || options.run_forward) && options.transform_path.has_value()) {
+    if (options.transform_path.has_value()) {
         const auto cam_status = gs2pc::LoadCameraFrames(*options.transform_path, options, camera_frames);
         if (!cam_status.ok()) {
             std::cerr << "Error: " << cam_status.message << '\n';
@@ -112,6 +245,13 @@ int main(int argc, const char* const argv[]) {
         if (!options.quiet) {
             std::cout << "Loaded camera frames: " << camera_frames.size() << " from "
                       << options.transform_path->string() << '\n';
+        }
+
+        if (!camera_frames.empty() && gaussians.has_sh_coefficients) {
+            ApplyShColourFromCameras(gaussians, camera_frames, options.max_sh_degree);
+            if (!options.quiet) {
+                std::cout << "Applied camera-aware SH colour averaging using loaded camera frames\n";
+            }
         }
     }
 
