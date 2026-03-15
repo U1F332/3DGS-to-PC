@@ -1,0 +1,14 @@
+{
+    "version": 1,
+    "revision": 0,
+    "rules": [
+        {
+            "primary-output": "CMakeFiles\\gs2pc_core.dir\\src\\camera\\camera_loader.cpp.obj",
+            "outputs": [
+                "C:\\WS\\Test\\GS2PC\\cpp_native\\build_cuda_auto\\vc140.pdb",
+                "CMakeFiles\\gs2pc_core.dir\\src\\camera\\camera_loader.cpp.obj.ddi"
+            ],
+            "requires": []
+        }
+    ]
+}

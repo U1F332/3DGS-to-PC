@@ -1,0 +1,110 @@
+cmake_minimum_required(VERSION 3.8...3.31)
+
+project(gs2pc_native LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+option(GS2PC_ENABLE_CUDA_RASTER "Enable native CUDA raster wrappers" OFF)
+set(GS2PC_CUDA_MIN_SM "75" CACHE STRING "Minimum CUDA SM architecture to support (e.g. 75, 86, 89)")
+option(GS2PC_FORCE_MIN_CUDA_ARCH "Force CMAKE_CUDA_ARCHITECTURES from GS2PC_CUDA_MIN_SM" ON)
+
+function(gs2pc_configure_cuda_architectures)
+    if(NOT GS2PC_CUDA_MIN_SM MATCHES "^[0-9]+$")
+        message(FATAL_ERROR "GS2PC_CUDA_MIN_SM must be an integer SM value, e.g. 75, 86, 89")
+    endif()
+
+    if(GS2PC_CUDA_MIN_SM LESS 50)
+        message(FATAL_ERROR "GS2PC_CUDA_MIN_SM must be >= 50")
+    endif()
+
+    if(NOT GS2PC_FORCE_MIN_CUDA_ARCH AND DEFINED CMAKE_CUDA_ARCHITECTURES AND NOT "${CMAKE_CUDA_ARCHITECTURES}" STREQUAL "")
+        message(STATUS "GS2PC: keeping existing CMAKE_CUDA_ARCHITECTURES=${CMAKE_CUDA_ARCHITECTURES}")
+        return()
+    endif()
+
+    set(CMAKE_CUDA_ARCHITECTURES
+        "${GS2PC_CUDA_MIN_SM}-real;${GS2PC_CUDA_MIN_SM}-virtual"
+        CACHE STRING "CUDA architectures for gs2pc native" FORCE)
+
+    message(STATUS "GS2PC: CMAKE_CUDA_ARCHITECTURES set to ${CMAKE_CUDA_ARCHITECTURES} (minimum SM ${GS2PC_CUDA_MIN_SM})")
+endfunction()
+
+set(GS2PC_CUDA_RASTER_AVAILABLE OFF)
+if(GS2PC_ENABLE_CUDA_RASTER)
+    if(WIN32 AND MSVC AND NOT DEFINED CMAKE_CUDA_HOST_COMPILER)
+        set(_gs2pc_default_host_cl
+            "C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64")
+        if(EXISTS "${_gs2pc_default_host_cl}")
+            set(CMAKE_CUDA_HOST_COMPILER "${_gs2pc_default_host_cl}" CACHE PATH "CUDA host compiler" FORCE)
+            message(STATUS "GS2PC: defaulting CMAKE_CUDA_HOST_COMPILER to ${CMAKE_CUDA_HOST_COMPILER}")
+        endif()
+        unset(_gs2pc_default_host_cl)
+    endif()
+
+    include(CheckLanguage)
+    check_language(CUDA)
+    if(CMAKE_CUDA_COMPILER)
+        gs2pc_configure_cuda_architectures()
+        enable_language(CUDA)
+        find_package(CUDAToolkit REQUIRED)
+        add_subdirectory(
+            ${CMAKE_CURRENT_SOURCE_DIR}/../gaussian-pointcloud-rasterization
+            ${CMAKE_CURRENT_BINARY_DIR}/gaussian-pointcloud-rasterization
+        )
+        set(GS2PC_CUDA_RASTER_AVAILABLE ON)
+    else()
+        message(WARNING "CUDA compiler unavailable; building cpp_native without raster CUDA integration")
+    endif()
+endif()
+
+add_library(gs2pc_core
+    src/cli/cli.cpp
+    src/io/io.cpp
+    src/camera/camera_loader.cpp
+    src/raster/raster.cpp
+    src/converter/converter.cpp
+    src/exporter/exporter.cpp
+)
+
+target_include_directories(gs2pc_core
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+if(MSVC)
+    target_compile_options(gs2pc_core PRIVATE /permissive-)
+else()
+    target_compile_options(gs2pc_core PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+if(GS2PC_CUDA_RASTER_AVAILABLE)
+    target_link_libraries(gs2pc_core PRIVATE CudaRasterizer CUDA::cudart)
+    target_compile_definitions(gs2pc_core PRIVATE GS2PC_HAS_CUDA_RASTER=1)
+endif()
+
+add_executable(gs2pc_cli
+    src/cli/main.cpp
+)
+
+target_link_libraries(gs2pc_cli PRIVATE gs2pc_core)
+
+find_program(GS2PC_CLANG_FORMAT_BIN
+    NAMES clang-format
+    HINTS
+        "C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/Llvm/bin")
+
+if(GS2PC_CLANG_FORMAT_BIN)
+    file(GLOB_RECURSE GS2PC_FORMAT_FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/*.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp")
+
+    add_custom_target(gs2pc_format
+        COMMAND ${GS2PC_CLANG_FORMAT_BIN} -i ${GS2PC_FORMAT_FILES}
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        COMMENT "Formatting cpp_native sources with clang-format"
+        VERBATIM)
+else()
+    message(STATUS "GS2PC: clang-format not found; 'gs2pc_format' target will not be generated")
+endif()

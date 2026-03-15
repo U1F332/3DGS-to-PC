@@ -1,0 +1,30 @@
+{
+	"bmi-installation" : null,
+	"compiler-frontend-variant" : "MSVC",
+	"compiler-id" : "MSVC",
+	"compiler-simulate-id" : "",
+	"config" : "Debug",
+	"cxx-modules" : {},
+	"database-info" : null,
+	"dir-cur-bld" : "C:/WS/Test/GS2PC/cpp_native/build_cuda_auto",
+	"dir-cur-src" : "C:/WS/Test/GS2PC/cpp_native",
+	"dir-top-bld" : "C:/WS/Test/GS2PC/cpp_native/build_cuda_auto",
+	"dir-top-src" : "C:/WS/Test/GS2PC/cpp_native",
+	"exports" : [],
+	"forward-modules-from-target-dirs" : [],
+	"include-dirs" : 
+	[
+		"C:\\WS\\Test\\GS2PC\\cpp_native\\include"
+	],
+	"language" : "CXX",
+	"linked-target-dirs" : [],
+	"module-dir" : "C:/WS/Test/GS2PC/cpp_native/build_cuda_auto/CMakeFiles/gs2pc_cli.dir",
+	"sources" : 
+	{
+		"CMakeFiles/gs2pc_cli.dir/src/cli/main.cpp.obj" : 
+		{
+			"language" : "CXX",
+			"source" : "C:/WS/Test/GS2PC/cpp_native/src/cli/main.cpp"
+		}
+	}
+}
