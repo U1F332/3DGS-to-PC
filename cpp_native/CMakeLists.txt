@@ -107,21 +107,31 @@ add_executable(gs2pc_cli
 
 target_link_libraries(gs2pc_cli PRIVATE gs2pc_core)
 
+set(GS2PC_PORTABLE_INSTALL_DIR "." CACHE STRING "Install destination for portable runtime files")
+
+install(TARGETS gs2pc_cli
+    RUNTIME DESTINATION "${GS2PC_PORTABLE_INSTALL_DIR}")
+
+if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.21")
+    install(FILES $<TARGET_RUNTIME_DLLS:gs2pc_cli>
+        DESTINATION "${GS2PC_PORTABLE_INSTALL_DIR}"
+        OPTIONAL)
+endif()
+
+if(WIN32 AND MSVC)
+    set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION "${GS2PC_PORTABLE_INSTALL_DIR}")
+    include(InstallRequiredSystemLibraries)
+endif()
+
+if(GS2PC_CUDA_RASTER_AVAILABLE AND DEFINED CUDAToolkit_BIN_DIR)
+    file(GLOB GS2PC_CUDART_DLLS "${CUDAToolkit_BIN_DIR}/cudart64*.dll")
+    if(GS2PC_CUDART_DLLS)
+        install(FILES ${GS2PC_CUDART_DLLS}
+            DESTINATION "${GS2PC_PORTABLE_INSTALL_DIR}")
+    endif()
+endif()
+
 find_program(GS2PC_CLANG_FORMAT_BIN
     NAMES clang-format
     HINTS
         "C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/Llvm/bin")
-
-if(GS2PC_CLANG_FORMAT_BIN)
-    file(GLOB_RECURSE GS2PC_FORMAT_FILES
-        "${CMAKE_CURRENT_SOURCE_DIR}/include/*.h"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp")
-
-    add_custom_target(gs2pc_format
-        COMMAND ${GS2PC_CLANG_FORMAT_BIN} -i ${GS2PC_FORMAT_FILES}
-        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-        COMMENT "Formatting cpp_native sources with clang-format"
-        VERBATIM)
-else()
-    message(STATUS "GS2PC: clang-format not found; 'gs2pc_format' target will not be generated")
-endif()
