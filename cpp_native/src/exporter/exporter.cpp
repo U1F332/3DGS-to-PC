@@ -42,7 +42,7 @@ Status ExportPointCloudPly(const PointCloud& point_cloud, const std::filesystem:
             if (value >= 1.0f) {
                 return 255;
             }
-            return static_cast<int>(value * 255.0f + 0.5f);
+            return static_cast<int>(value * 255.0f);
         };
 
         stream << point.position.x << ' ' << point.position.y << ' ' << point.position.z << ' ';

@@ -226,7 +226,6 @@ Status RasterizeForward(const RasterFrameInputs& inputs, RasterFrameOutputs& out
     std::vector<float> colors;
     std::vector<float> opacities;
     std::vector<float> cov3d_precomp;
-    std::vector<float> shs;
 
     means3d.reserve(static_cast<std::size_t>(P) * 3);
     colors.reserve(static_cast<std::size_t>(P) * 3);
@@ -234,17 +233,7 @@ Status RasterizeForward(const RasterFrameInputs& inputs, RasterFrameOutputs& out
     cov3d_precomp.reserve(static_cast<std::size_t>(P) * 6);
 
     const int sh_degree = std::clamp(inputs.sh_degree, 0, 4);
-    const int max_sh_coeffs = (sh_degree + 1) * (sh_degree + 1);
-    bool can_use_sh = true;
-    for (const auto& g : gaussians.items) {
-        if (g.sh_coefficients.size() < static_cast<std::size_t>(max_sh_coeffs * 3)) {
-            can_use_sh = false;
-            break;
-        }
-    }
-    if (can_use_sh) {
-        shs.reserve(static_cast<std::size_t>(P) * static_cast<std::size_t>(max_sh_coeffs) * 3);
-    }
+    const int max_sh_coeffs = 0;
 
     for (const auto& g : gaussians.items) {
         means3d.push_back(g.position.x);
@@ -299,21 +288,6 @@ Status RasterizeForward(const RasterFrameInputs& inputs, RasterFrameOutputs& out
         cov3d_precomp.push_back(S11);
         cov3d_precomp.push_back(S12);
         cov3d_precomp.push_back(S22);
-
-        if (can_use_sh) {
-            for (int coeff_idx = 0; coeff_idx < max_sh_coeffs; ++coeff_idx) {
-                if (coeff_idx == 0) {
-                    shs.push_back(g.sh_coefficients[0]);
-                    shs.push_back(g.sh_coefficients[1]);
-                    shs.push_back(g.sh_coefficients[2]);
-                } else {
-                    const std::size_t base = 3 + static_cast<std::size_t>(coeff_idx - 1) * 3;
-                    shs.push_back(g.sh_coefficients[base + 0]);
-                    shs.push_back(g.sh_coefficients[base + 1]);
-                    shs.push_back(g.sh_coefficients[base + 2]);
-                }
-            }
-        }
     }
 
     std::vector<float> background = {1.0f, 1.0f, 1.0f};
@@ -403,14 +377,8 @@ Status RasterizeForward(const RasterFrameInputs& inputs, RasterFrameOutputs& out
         return fail(s);
     if (auto s = CopyHostToDevice(means3d.data(), means3d.size(), d_means3d); !s.ok())
         return fail(s);
-    if (!can_use_sh) {
-        if (auto s = CopyHostToDevice(colors.data(), colors.size(), d_colors); !s.ok())
-            return fail(s);
-    }
-    if (can_use_sh) {
-        if (auto s = CopyHostToDevice(shs.data(), shs.size(), d_shs); !s.ok())
-            return fail(s);
-    }
+    if (auto s = CopyHostToDevice(colors.data(), colors.size(), d_colors); !s.ok())
+        return fail(s);
     if (auto s = CopyHostToDevice(opacities.data(), opacities.size(), d_opacities); !s.ok())
         return fail(s);
     if (auto s = CopyHostToDevice(cov3d_precomp.data(), cov3d_precomp.size(), d_cov3d); !s.ok())
@@ -517,7 +485,7 @@ Status RasterizeForward(const RasterFrameInputs& inputs, RasterFrameOutputs& out
     try {
         outputs.rendered = CudaRasterizer::Rasterizer::forward(
             geom_func, binning_func, image_func, P, sh_degree, max_sh_coeffs, d_background, W, H, d_means3d,
-            can_use_sh ? d_shs : nullptr, can_use_sh ? nullptr : d_colors, d_opacities, nullptr, 1.0f, nullptr,
+            nullptr, d_colors, d_opacities, nullptr, 1.0f, nullptr,
             d_cov3d, d_view, d_proj, d_campos, camera.intrinsics.tan_fov_x, camera.intrinsics.tan_fov_y,
             camera.render.prefiltered, d_out_color, d_out_depth, d_out_invdepth, camera.render.antialiasing,
             d_gauss_contrib, d_gauss_surface, d_gauss_pixels, d_mask, d_radii, inputs.calculate_surface_distance,

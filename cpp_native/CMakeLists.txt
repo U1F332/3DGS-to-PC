@@ -24,7 +24,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-option(GS2PC_ENABLE_CUDA_RASTER "Enable native CUDA raster wrappers" OFF)
+option(GS2PC_ENABLE_CUDA_RASTER "Enable native CUDA raster wrappers" ON)
 set(GS2PC_CUDA_MIN_SM "75" CACHE STRING "Minimum CUDA SM architecture to support (e.g. 75, 86, 89)")
 option(GS2PC_FORCE_MIN_CUDA_ARCH "Force CMAKE_CUDA_ARCHITECTURES from GS2PC_CUDA_MIN_SM" ON)
 
@@ -108,14 +108,22 @@ add_executable(gs2pc_cli
 target_link_libraries(gs2pc_cli PRIVATE gs2pc_core)
 
 set(GS2PC_PORTABLE_INSTALL_DIR "." CACHE STRING "Install destination for portable runtime files")
+set(GS2PC_DIST_DIR "${CMAKE_CURRENT_BINARY_DIR}/dist" CACHE PATH "Output directory for packaged runtime files")
 
-install(TARGETS gs2pc_cli
-    RUNTIME DESTINATION "${GS2PC_PORTABLE_INSTALL_DIR}")
+if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
+    set(CMAKE_INSTALL_PREFIX "${GS2PC_DIST_DIR}" CACHE PATH "Install prefix" FORCE)
+endif()
 
 if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.21")
+    install(TARGETS gs2pc_cli
+        RUNTIME DESTINATION "${GS2PC_PORTABLE_INSTALL_DIR}")
+
     install(FILES $<TARGET_RUNTIME_DLLS:gs2pc_cli>
         DESTINATION "${GS2PC_PORTABLE_INSTALL_DIR}"
         OPTIONAL)
+else()
+    install(TARGETS gs2pc_cli
+        RUNTIME DESTINATION "${GS2PC_PORTABLE_INSTALL_DIR}")
 endif()
 
 if(WIN32 AND MSVC)
@@ -131,7 +139,7 @@ if(GS2PC_CUDA_RASTER_AVAILABLE AND DEFINED CUDAToolkit_BIN_DIR)
     endif()
 endif()
 
-find_program(GS2PC_CLANG_FORMAT_BIN
-    NAMES clang-format
-    HINTS
-        "C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/Llvm/bin")
+add_custom_target(gs2pc_dist ALL
+    COMMAND ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --prefix "${GS2PC_DIST_DIR}"
+    DEPENDS gs2pc_cli
+    COMMENT "Installing gs2pc_cli and runtime dependencies into ${GS2PC_DIST_DIR}")
