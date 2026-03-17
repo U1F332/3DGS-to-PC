@@ -201,10 +201,20 @@ void ApplyShColourFromCameras(gs2pc::GaussianSet& gaussians, const std::vector<g
     }
 }
 
+const char* ToString(gs2pc::PlyExportFormat format) {
+    return (format == gs2pc::PlyExportFormat::Binary) ? "binary" : "ascii";
+}
+
 } // namespace
 
 int main(int argc, const char* const argv[]) {
     const auto start_time = std::chrono::steady_clock::now();
+
+    long long gaussian_load_ms = 0;
+    long long camera_load_ms = 0;
+    long long forward_ms = 0;
+    long long convert_ms = 0;
+    long long export_stage_ms = 0;
 
     gs2pc::CliOptions options;
     const auto parse_status = gs2pc::ParseCommandLine(argc, argv, options);
@@ -224,7 +234,10 @@ int main(int argc, const char* const argv[]) {
     }
 
     gs2pc::GaussianSet gaussians;
+    const auto gauss_load_start = std::chrono::steady_clock::now();
     const auto load_status = gs2pc::LoadGaussians(options.input_path, gaussians);
+    const auto gauss_load_end = std::chrono::steady_clock::now();
+    gaussian_load_ms = std::chrono::duration_cast<std::chrono::milliseconds>(gauss_load_end - gauss_load_start).count();
     if (!load_status.ok()) {
         std::cerr << "Error: " << load_status.message << '\n';
         return 1;
@@ -238,6 +251,7 @@ int main(int argc, const char* const argv[]) {
     }
 
     std::vector<gs2pc::CameraFrame> camera_frames;
+    const auto camera_load_start = std::chrono::steady_clock::now();
     if (options.transform_path.has_value()) {
         const auto cam_status = gs2pc::LoadCameraFrames(*options.transform_path, options, camera_frames);
         if (!cam_status.ok()) {
@@ -250,6 +264,8 @@ int main(int argc, const char* const argv[]) {
                       << options.transform_path->string() << '\n';
         }
     }
+    const auto camera_load_end = std::chrono::steady_clock::now();
+    camera_load_ms = std::chrono::duration_cast<std::chrono::milliseconds>(camera_load_end - camera_load_start).count();
 
     const bool auto_forward_colours = options.render_colours && !camera_frames.empty() && gs2pc::HasCudaRasterizer();
     const bool run_forward_pass = options.run_forward || auto_forward_colours;
@@ -322,6 +338,7 @@ int main(int argc, const char* const argv[]) {
     }
 
     if (run_forward_pass) {
+        const auto forward_start = std::chrono::steady_clock::now();
         if (!gs2pc::HasCudaRasterizer()) {
             std::cerr << "Error: this build does not include CUDA raster support; reconfigure with "
                          "GS2PC_ENABLE_CUDA_RASTER=ON\n";
@@ -439,17 +456,27 @@ int main(int argc, const char* const argv[]) {
                       << " camera(s). rendered instances sum: " << total_rendered_instances << '\n';
             std::cout << "forward gauss contribution sum/max: " << total_value << " / " << max_value << '\n';
         }
+        const auto forward_end = std::chrono::steady_clock::now();
+        forward_ms = std::chrono::duration_cast<std::chrono::milliseconds>(forward_end - forward_start).count();
     }
 
     gs2pc::PointCloud point_cloud;
     gs2pc::RenderStats stats;
+    const auto convert_start = std::chrono::steady_clock::now();
     const auto convert_status = gs2pc::ConvertGaussiansToPointCloud(working_gaussians, options, point_cloud, &stats);
+    const auto convert_end = std::chrono::steady_clock::now();
+    convert_ms = std::chrono::duration_cast<std::chrono::milliseconds>(convert_end - convert_start).count();
     if (!convert_status.ok()) {
         std::cerr << "Error: " << convert_status.message << '\n';
         return 1;
     }
 
-    const auto export_status = gs2pc::ExportPointCloudPly(point_cloud, options.output_path);
+    gs2pc::ExportTimings export_timings;
+    const auto export_stage_start = std::chrono::steady_clock::now();
+    const auto export_status =
+        gs2pc::ExportPointCloudPly(point_cloud, options.output_path, options.export_format, &export_timings);
+    const auto export_stage_end = std::chrono::steady_clock::now();
+    export_stage_ms = std::chrono::duration_cast<std::chrono::milliseconds>(export_stage_end - export_stage_start).count();
     if (!export_status.ok()) {
         std::cerr << "Error: " << export_status.message << '\n';
         return 1;
@@ -459,7 +486,14 @@ int main(int argc, const char* const argv[]) {
         std::cout << "Loaded gaussians: " << gaussians.size() << '\n';
         std::cout << "Exported points: " << stats.exported_point_count << '\n';
         std::cout << "Saved point cloud to: " << options.output_path.string() << '\n';
+        std::cout << "Export format: " << ToString(options.export_format) << '\n';
         std::cout << "Note: native converter now samples points from filtered Gaussians toward --num_points.\n";
+        std::cout << "Timing breakdown (ms): load_gaussians=" << gaussian_load_ms
+                  << ", load_cameras=" << camera_load_ms << ", forward=" << forward_ms
+                  << ", convert=" << convert_ms << ", export_total=" << export_stage_ms << '\n';
+        std::cout << "Export I/O detail (ms): header=" << export_timings.header_write_ms
+                  << ", vertices=" << export_timings.vertex_write_ms << ", flush=" << export_timings.flush_ms
+                  << ", total=" << export_timings.total_ms << '\n';
     }
 
     const auto end_time = std::chrono::steady_clock::now();

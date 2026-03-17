@@ -101,6 +101,7 @@ std::string BuildHelpText() {
     oss << "  --help                         Show this help message\n";
     oss << "  --input_path <path>            Input Gaussian scene\n";
     oss << "  --output_path <path>           Output point cloud path (default: 3dgs_pc.ply)\n";
+    oss << "  --export_format <binary|ascii> PLY export format (default: binary)\n";
     oss << "  --transform_path <path>        Camera transform source\n";
     oss << "  --mask_path <path>             Mask directory\n";
     oss << "  --renderer_type <cuda|python>  Renderer type placeholder (default: cuda)\n";
@@ -155,6 +156,20 @@ Status ParseCommandLine(int argc, const char* const argv[], CliOptions& options)
                 return status;
             }
             options.output_path = argv[++i];
+            continue;
+        }
+        if (arg == "--export_format") {
+            if (const auto status = RequireValue(i, argc, arg); !status.ok()) {
+                return status;
+            }
+            const std::string_view value = argv[++i];
+            if (value == "binary") {
+                options.export_format = PlyExportFormat::Binary;
+            } else if (value == "ascii") {
+                options.export_format = PlyExportFormat::Ascii;
+            } else {
+                return Status::InvalidArgument("--export_format must be one of binary, ascii");
+            }
             continue;
         }
         if (arg == "--transform_path") {

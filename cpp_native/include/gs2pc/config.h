@@ -11,6 +11,11 @@
 
 namespace gs2pc {
 
+enum class PlyExportFormat {
+    Binary,
+    Ascii,
+};
+
 struct CameraIntrinsics {
     float tan_fov_x = 1.0f;
     float tan_fov_y = 1.0f;
@@ -51,6 +56,8 @@ struct ConversionConfig {
     std::filesystem::path output_path = "3dgs_pc.ply";
     std::optional<std::filesystem::path> transform_path;
     std::optional<std::filesystem::path> mask_path;
+
+    PlyExportFormat export_format = PlyExportFormat::Binary;
 
     std::string renderer_type = "cuda";
     int num_points = 10000000;
