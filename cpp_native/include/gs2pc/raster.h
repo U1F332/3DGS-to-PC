@@ -3,6 +3,7 @@
 #include "gs2pc/camera.h"
 #include "gs2pc/types.h"
 
+#include <cstddef>
 #include <vector>
 
 namespace gs2pc {
@@ -27,5 +28,10 @@ struct RasterFrameOutputs {
 [[nodiscard]] bool HasCudaRasterizer() noexcept;
 [[nodiscard]] Status MarkVisible(const RasterFrameInputs& inputs, std::vector<bool>& present);
 [[nodiscard]] Status RasterizeForward(const RasterFrameInputs& inputs, RasterFrameOutputs& outputs);
+[[nodiscard]] Status GetAccumulatedGaussianStatistics(std::size_t expected_count, bool include_surface,
+                                                      std::vector<float>& max_contributions,
+                                                      std::vector<float>& best_colours,
+                                                      std::vector<float>& total_contributions,
+                                                      std::vector<float>& min_surface_distances);
 
 } // namespace gs2pc

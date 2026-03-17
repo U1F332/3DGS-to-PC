@@ -192,6 +192,20 @@ CudaRasterizer::BinningState CudaRasterizer::BinningState::fromChunk(char*& chun
 	return binning;
 }
 
+// Forward declaration for post-process kernel that updates per-Gaussian best contribution/colors.
+__global__ void updateBestContributionColors(
+	int P,
+	int pixel_count,
+	const float* gauss_contributions,
+	const float* gauss_surface_distances,
+	const int* gauss_pixels,
+	const float* out_color,
+	bool calculate_surface_distance,
+	float* gauss_best_contributions,
+	float* gauss_best_colors,
+	float* gauss_total_contributions,
+	float* gauss_min_surface_distances);
+
 // Forward rendering procedure for differentiable rasterization
 // of Gaussians.
 int CudaRasterizer::Rasterizer::forward(
@@ -224,7 +238,11 @@ int CudaRasterizer::Rasterizer::forward(
 	int* mask,
 	int* radii,
 	bool calculate_surface_distance,
-	bool debug)
+	bool debug,
+	float* gauss_best_contributions,
+	float* gauss_best_colors,
+	float* gauss_total_contributions,
+	float* gauss_min_surface_distances)
 {
 	const float focal_y = height / (2.0f * tan_fovy);
 	const float focal_x = width / (2.0f * tan_fovx);
@@ -348,5 +366,66 @@ int CudaRasterizer::Rasterizer::forward(
 		mask,
 		calculate_surface_distance), debug)
 
+	if (gauss_best_contributions != nullptr && gauss_best_colors != nullptr)
+	{
+		const int pixel_count = width * height;
+		updateBestContributionColors << <(P + 255) / 256, 256 >> > (
+			P,
+			pixel_count,
+			gauss_contributions,
+			gauss_surface_distances,
+			gauss_pixels,
+			out_color,
+			calculate_surface_distance,
+			gauss_best_contributions,
+			gauss_best_colors,
+			gauss_total_contributions,
+			gauss_min_surface_distances);
+		CHECK_CUDA(, debug)
+	}
+
 	return num_rendered;
+}
+
+__global__ void updateBestContributionColors(
+	int P,
+	int pixel_count,
+	const float* gauss_contributions,
+	const float* gauss_surface_distances,
+	const int* gauss_pixels,
+	const float* out_color,
+	bool calculate_surface_distance,
+	float* gauss_best_contributions,
+	float* gauss_best_colors,
+	float* gauss_total_contributions,
+	float* gauss_min_surface_distances)
+{
+	auto idx = cg::this_grid().thread_rank();
+	if (idx >= P)
+		return;
+	if (gauss_best_contributions == nullptr || gauss_best_colors == nullptr)
+		return;
+
+	const float c = gauss_contributions[idx];
+	if (gauss_total_contributions != nullptr)
+		gauss_total_contributions[idx] += c;
+
+	if (calculate_surface_distance && gauss_surface_distances != nullptr && gauss_min_surface_distances != nullptr)
+	{
+		const float sd = gauss_surface_distances[idx];
+		if (sd < gauss_min_surface_distances[idx])
+			gauss_min_surface_distances[idx] = sd;
+	}
+
+	if (c <= gauss_best_contributions[idx])
+		return;
+
+	const int pixel_idx = gauss_pixels[idx];
+	if (pixel_idx < 0 || pixel_idx >= pixel_count)
+		return;
+
+	gauss_best_contributions[idx] = c;
+	gauss_best_colors[idx * 3 + 0] = out_color[pixel_idx];
+	gauss_best_colors[idx * 3 + 1] = out_color[pixel_count + pixel_idx];
+	gauss_best_colors[idx * 3 + 2] = out_color[pixel_count * 2 + pixel_idx];
 }

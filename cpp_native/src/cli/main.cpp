@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <iostream>
@@ -203,6 +204,8 @@ void ApplyShColourFromCameras(gs2pc::GaussianSet& gaussians, const std::vector<g
 } // namespace
 
 int main(int argc, const char* const argv[]) {
+    const auto start_time = std::chrono::steady_clock::now();
+
     gs2pc::CliOptions options;
     const auto parse_status = gs2pc::ParseCommandLine(argc, argv, options);
     if (!parse_status.ok()) {
@@ -340,9 +343,8 @@ int main(int argc, const char* const argv[]) {
         }
 
         std::vector<float> max_contrib(working_gaussians.size(), 0.0f);
-        std::vector<float> total_contrib(working_gaussians.size(), 0.0f);
-        std::vector<float> min_surface_dist(working_gaussians.size(), std::numeric_limits<float>::max());
-        std::vector<std::array<float, 3>> best_colors(working_gaussians.size(), {0.0f, 0.0f, 0.0f});
+        std::vector<float> total_contrib;
+        std::vector<float> min_surface_dist;
 
         std::size_t total_rendered_instances = 0;
 
@@ -362,40 +364,25 @@ int main(int argc, const char* const argv[]) {
             }
 
             total_rendered_instances += static_cast<std::size_t>(forward_outputs.rendered);
+        }
 
-            const int pixel_count = cam.render.image_width * cam.render.image_height;
-            for (std::size_t i = 0; i < working_gaussians.size() && i < forward_outputs.gauss_contributions.size();
-                 ++i) {
-                const float c = forward_outputs.gauss_contributions[i];
-                total_contrib[i] += c;
-
-                if (c > max_contrib[i]) {
-                    max_contrib[i] = c;
-
-                    if (i < forward_outputs.gauss_pixels.size()) {
-                        const int pixel_idx = forward_outputs.gauss_pixels[i];
-                        if (pixel_idx >= 0 && pixel_idx < pixel_count) {
-                            const int r_idx = pixel_idx;
-                            const int g_idx = pixel_count + pixel_idx;
-                            const int b_idx = pixel_count * 2 + pixel_idx;
-                            if (b_idx < static_cast<int>(forward_outputs.color.size())) {
-                                best_colors[i] = {SafeChannel(forward_outputs.color[r_idx]),
-                                                  SafeChannel(forward_outputs.color[g_idx]),
-                                                  SafeChannel(forward_outputs.color[b_idx])};
-                            }
-                        }
-                    }
-                }
-
-                if (options.point_cloud.enable_surface_distance && i < forward_outputs.gauss_surface_distances.size()) {
-                    min_surface_dist[i] = std::min(min_surface_dist[i], forward_outputs.gauss_surface_distances[i]);
-                }
-            }
+        std::vector<float> best_colors_flat;
+        const auto stats_status = gs2pc::GetAccumulatedGaussianStatistics(
+            working_gaussians.size(), options.point_cloud.enable_surface_distance, max_contrib, best_colors_flat,
+            total_contrib, min_surface_dist);
+        if (!stats_status.ok()) {
+            std::cerr << "Error: " << stats_status.message << '\n';
+            return 1;
         }
 
         for (std::size_t i = 0; i < working_gaussians.size(); ++i) {
             if (max_contrib[i] > 0.0f) {
-                working_gaussians.items[i].color = best_colors[i];
+                const std::size_t base = i * 3;
+                if (base + 2 < best_colors_flat.size()) {
+                    working_gaussians.items[i].color = {SafeChannel(best_colors_flat[base + 0]),
+                                                        SafeChannel(best_colors_flat[base + 1]),
+                                                        SafeChannel(best_colors_flat[base + 2])};
+                }
             }
         }
 
@@ -474,6 +461,10 @@ int main(int argc, const char* const argv[]) {
         std::cout << "Saved point cloud to: " << options.output_path.string() << '\n';
         std::cout << "Note: native converter now samples points from filtered Gaussians toward --num_points.\n";
     }
+
+    const auto end_time = std::chrono::steady_clock::now();
+    const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
+    std::cout << "Total processing time: " << elapsed_ms << " ms\n";
 
     return 0;
 }

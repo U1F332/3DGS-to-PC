@@ -155,6 +155,10 @@ struct CachedForwardDeviceData {
     float* d_gauss_contrib = nullptr;
     float* d_gauss_surface = nullptr;
     int* d_gauss_pixels = nullptr;
+    float* d_best_contrib = nullptr;
+    float* d_best_colors = nullptr;
+    float* d_total_contrib = nullptr;
+    float* d_min_surface = nullptr;
 
     char* d_geom_buffer = nullptr;
     char* d_binning_buffer = nullptr;
@@ -173,10 +177,17 @@ struct CachedForwardDeviceData {
     std::size_t gauss_contrib_capacity = 0;
     std::size_t gauss_surface_capacity = 0;
     std::size_t gauss_pixels_capacity = 0;
+    std::size_t best_contrib_capacity = 0;
+    std::size_t best_colors_capacity = 0;
+    std::size_t total_contrib_capacity = 0;
+    std::size_t min_surface_capacity = 0;
 
     std::size_t geom_buffer_size = 0;
     std::size_t binning_buffer_size = 0;
     std::size_t image_buffer_size = 0;
+
+    const GaussianSet* accum_source = nullptr;
+    int accum_count = 0;
 
     std::vector<float> init_surface_host;
 
@@ -206,13 +217,14 @@ struct CachedForwardDeviceData {
             cudaFree(d_gauss_surface);
         if (d_gauss_pixels)
             cudaFree(d_gauss_pixels);
-
-        if (d_geom_buffer)
-            cudaFree(d_geom_buffer);
-        if (d_binning_buffer)
-            cudaFree(d_binning_buffer);
-        if (d_image_buffer)
-            cudaFree(d_image_buffer);
+        if (d_best_contrib)
+            cudaFree(d_best_contrib);
+        if (d_best_colors)
+            cudaFree(d_best_colors);
+        if (d_total_contrib)
+            cudaFree(d_total_contrib);
+        if (d_min_surface)
+            cudaFree(d_min_surface);
 
         d_background = nullptr;
         d_view = nullptr;
@@ -227,6 +239,17 @@ struct CachedForwardDeviceData {
         d_gauss_contrib = nullptr;
         d_gauss_surface = nullptr;
         d_gauss_pixels = nullptr;
+        d_best_contrib = nullptr;
+        d_best_colors = nullptr;
+        d_total_contrib = nullptr;
+        d_min_surface = nullptr;
+
+        if (d_geom_buffer)
+            cudaFree(d_geom_buffer);
+        if (d_binning_buffer)
+            cudaFree(d_binning_buffer);
+        if (d_image_buffer)
+            cudaFree(d_image_buffer);
 
         d_geom_buffer = nullptr;
         d_binning_buffer = nullptr;
@@ -245,11 +268,17 @@ struct CachedForwardDeviceData {
         gauss_contrib_capacity = 0;
         gauss_surface_capacity = 0;
         gauss_pixels_capacity = 0;
+        best_contrib_capacity = 0;
+        best_colors_capacity = 0;
+        total_contrib_capacity = 0;
+        min_surface_capacity = 0;
 
         geom_buffer_size = 0;
         binning_buffer_size = 0;
         image_buffer_size = 0;
 
+        accum_source = nullptr;
+        accum_count = 0;
         init_surface_host.clear();
     }
 
@@ -323,11 +352,74 @@ Status EnsureForwardCacheCapacity(CachedForwardDeviceData& cache, int width, int
         cache.Release();
         return s;
     }
+    if (auto s = EnsureDeviceCapacity(cache.d_best_contrib, cache.best_contrib_capacity,
+                                      static_cast<std::size_t>(point_count), "best_contributions");
+        !s.ok()) {
+        cache.Release();
+        return s;
+    }
+    if (auto s = EnsureDeviceCapacity(cache.d_best_colors, cache.best_colors_capacity,
+                                      static_cast<std::size_t>(point_count) * 3, "best_colors");
+        !s.ok()) {
+        cache.Release();
+        return s;
+    }
+    if (auto s = EnsureDeviceCapacity(cache.d_total_contrib, cache.total_contrib_capacity,
+                                      static_cast<std::size_t>(point_count), "total_contributions");
+        !s.ok()) {
+        cache.Release();
+        return s;
+    }
+    if (auto s = EnsureDeviceCapacity(cache.d_min_surface, cache.min_surface_capacity,
+                                      static_cast<std::size_t>(point_count), "min_surface_distances");
+        !s.ok()) {
+        cache.Release();
+        return s;
+    }
 
     if (cache.init_surface_host.size() < static_cast<std::size_t>(point_count)) {
         cache.init_surface_host.assign(static_cast<std::size_t>(point_count), std::numeric_limits<float>::max());
     }
 
+    return Status::Ok();
+}
+
+Status ResetBestAccumulationIfNeeded(CachedForwardDeviceData& cache, const GaussianSet& gaussians, int point_count) {
+    if (cache.accum_source == &gaussians && cache.accum_count == point_count) {
+        return Status::Ok();
+    }
+
+    const auto reset_best_contrib =
+        cudaMemset(cache.d_best_contrib, 0, static_cast<std::size_t>(point_count) * sizeof(float));
+    if (reset_best_contrib != cudaSuccess) {
+        return MakeCudaErrorStatus("cudaMemset failed for best contributions", reset_best_contrib);
+    }
+
+    const auto reset_best_colors =
+        cudaMemset(cache.d_best_colors, 0, static_cast<std::size_t>(point_count) * 3 * sizeof(float));
+    if (reset_best_colors != cudaSuccess) {
+        return MakeCudaErrorStatus("cudaMemset failed for best colors", reset_best_colors);
+    }
+
+    const auto reset_total_contrib =
+        cudaMemset(cache.d_total_contrib, 0, static_cast<std::size_t>(point_count) * sizeof(float));
+    if (reset_total_contrib != cudaSuccess) {
+        return MakeCudaErrorStatus("cudaMemset failed for total contributions", reset_total_contrib);
+    }
+
+    if (cache.init_surface_host.size() < static_cast<std::size_t>(point_count)) {
+        cache.init_surface_host.assign(static_cast<std::size_t>(point_count), std::numeric_limits<float>::max());
+    }
+
+    const auto reset_min_surface = cudaMemcpy(cache.d_min_surface, cache.init_surface_host.data(),
+                                              static_cast<std::size_t>(point_count) * sizeof(float),
+                                              cudaMemcpyHostToDevice);
+    if (reset_min_surface != cudaSuccess) {
+        return MakeCudaErrorStatus("cudaMemcpy failed for min surface reset", reset_min_surface);
+    }
+
+    cache.accum_source = &gaussians;
+    cache.accum_count = point_count;
     return Status::Ok();
 }
 
@@ -647,12 +739,6 @@ Status MarkVisible(const RasterFrameInputs& inputs, std::vector<bool>& present) 
         return MakeCudaErrorStatus("markVisible kernel launch failed", launch_error);
     }
 
-    const auto sync_error = cudaDeviceSynchronize();
-    if (sync_error != cudaSuccess) {
-        free_all();
-        return MakeCudaErrorStatus("markVisible kernel execution failed", sync_error);
-    }
-
     std::unique_ptr<bool[]> host_present(new bool[gaussians.size()]);
     const auto copy_back_error =
         cudaMemcpy(host_present.get(), d_present, gaussians.size() * sizeof(bool), cudaMemcpyDeviceToHost);
@@ -714,6 +800,9 @@ Status RasterizeForward(const RasterFrameInputs& inputs, RasterFrameOutputs& out
 
     CachedForwardDeviceData& forward_cache = GetForwardCache();
     if (auto s = EnsureForwardCacheCapacity(forward_cache, W, H, P); !s.ok()) {
+        return s;
+    }
+    if (auto s = ResetBestAccumulationIfNeeded(forward_cache, gaussians, P); !s.ok()) {
         return s;
     }
     if (auto s = EnsureBackgroundOnDevice(forward_cache); !s.ok()) {
@@ -778,57 +867,193 @@ Status RasterizeForward(const RasterFrameInputs& inputs, RasterFrameOutputs& out
             forward_cache.d_out_color, forward_cache.d_out_depth, forward_cache.d_out_invdepth,
             camera.render.antialiasing, forward_cache.d_gauss_contrib, forward_cache.d_gauss_surface,
             forward_cache.d_gauss_pixels, forward_cache.d_mask, forward_cache.d_radii, inputs.calculate_surface_distance,
-            camera.render.debug);
+            camera.render.debug, forward_cache.d_best_contrib, forward_cache.d_best_colors,
+            forward_cache.d_total_contrib, forward_cache.d_min_surface);
     } catch (const std::exception& e) {
         return Status::RuntimeError(std::string("rasterizer forward threw: ") + e.what());
     }
 
-    const auto launch_error = cudaGetLastError();
-    if (launch_error != cudaSuccess) {
-        return MakeCudaErrorStatus("forward kernel launch failed", launch_error);
-    }
-
-    const auto sync_error = cudaDeviceSynchronize();
-    if (sync_error != cudaSuccess) {
-        return MakeCudaErrorStatus("forward kernel execution failed", sync_error);
-    }
-
-    const std::size_t pixel_count = static_cast<std::size_t>(W) * static_cast<std::size_t>(H);
-    outputs.color.resize(pixel_count * 3);
-    outputs.depth.resize(pixel_count);
-    outputs.gauss_contributions.resize(static_cast<std::size_t>(P));
-    outputs.gauss_surface_distances.resize(static_cast<std::size_t>(P));
-    outputs.gauss_pixels.resize(static_cast<std::size_t>(P));
-
-    auto copy_back = [&](void* dst, const void* src, std::size_t bytes, const char* what) -> Status {
-        const auto e = cudaMemcpy(dst, src, bytes, cudaMemcpyDeviceToHost);
-        return (e == cudaSuccess) ? Status::Ok()
-                                  : MakeCudaErrorStatus(std::string("cudaMemcpy device->host failed for ") + what, e);
-    };
-
-    if (auto s = copy_back(outputs.color.data(), forward_cache.d_out_color, outputs.color.size() * sizeof(float),
-                           "out_color");
-        !s.ok())
-        return s;
-    if (auto s = copy_back(outputs.depth.data(), forward_cache.d_out_depth, outputs.depth.size() * sizeof(float),
-                           "out_depth");
-        !s.ok())
-        return s;
-    if (auto s = copy_back(outputs.gauss_contributions.data(), forward_cache.d_gauss_contrib,
-                           outputs.gauss_contributions.size() * sizeof(float), "gauss_contributions");
-        !s.ok())
-        return s;
-    if (auto s = copy_back(outputs.gauss_surface_distances.data(), forward_cache.d_gauss_surface,
-                           outputs.gauss_surface_distances.size() * sizeof(float), "gauss_surface_distances");
-        !s.ok())
-        return s;
-    if (auto s = copy_back(outputs.gauss_pixels.data(), forward_cache.d_gauss_pixels,
-                           outputs.gauss_pixels.size() * sizeof(int), "gauss_pixels");
-        !s.ok())
-        return s;
+    outputs.color.clear();
+    outputs.depth.clear();
+    outputs.gauss_contributions.clear();
+    outputs.gauss_surface_distances.clear();
+    outputs.gauss_pixels.clear();
 
     return Status::Ok();
 #endif
+}
+
+Status GetAccumulatedGaussianStatistics(std::size_t expected_count, bool include_surface,
+                                       std::vector<float>& max_contributions,
+                                       std::vector<float>& best_colours,
+                                       std::vector<float>& total_contributions,
+                                       std::vector<float>& min_surface_distances) {
+#if !defined(GS2PC_HAS_CUDA_RASTER)
+    (void)expected_count;
+    (void)include_surface;
+    max_contributions.clear();
+    best_colours.clear();
+    total_contributions.clear();
+    min_surface_distances.clear();
+    return Status::NotImplemented("CUDA rasterizer support is disabled in this build");
+#else
+    if (const auto device_status = EnsureCudaDevice(); !device_status.ok()) {
+        return device_status;
+    }
+
+    CachedForwardDeviceData& forward_cache = GetForwardCache();
+    if (forward_cache.d_best_contrib == nullptr || forward_cache.d_best_colors == nullptr ||
+        forward_cache.d_total_contrib == nullptr || forward_cache.d_min_surface == nullptr) {
+        max_contributions.clear();
+        best_colours.clear();
+        total_contributions.clear();
+        min_surface_distances.clear();
+        return Status::Ok();
+    }
+
+    if (forward_cache.accum_count <= 0) {
+        max_contributions.clear();
+        best_colours.clear();
+        total_contributions.clear();
+        min_surface_distances.clear();
+        return Status::Ok();
+    }
+
+    const std::size_t count = static_cast<std::size_t>(forward_cache.accum_count);
+    if (expected_count != 0 && expected_count != count) {
+        return Status::InvalidArgument("accumulated gaussian count does not match expected_count");
+    }
+
+    max_contributions.resize(count);
+    best_colours.resize(count * 3);
+    total_contributions.resize(count);
+    if (include_surface) {
+        min_surface_distances.resize(count);
+    } else {
+        min_surface_distances.clear();
+    }
+
+    const auto max_error = cudaMemcpy(max_contributions.data(), forward_cache.d_best_contrib, count * sizeof(float),
+                                      cudaMemcpyDeviceToHost);
+    if (max_error != cudaSuccess) {
+        return MakeCudaErrorStatus("cudaMemcpy device->host failed for accumulated max contributions", max_error);
+    }
+
+    const auto col_error = cudaMemcpy(best_colours.data(), forward_cache.d_best_colors, count * 3 * sizeof(float),
+                                      cudaMemcpyDeviceToHost);
+    if (col_error != cudaSuccess) {
+        return MakeCudaErrorStatus("cudaMemcpy device->host failed for accumulated best colors", col_error);
+    }
+
+    const auto total_error = cudaMemcpy(total_contributions.data(), forward_cache.d_total_contrib,
+                                        count * sizeof(float), cudaMemcpyDeviceToHost);
+    if (total_error != cudaSuccess) {
+        return MakeCudaErrorStatus("cudaMemcpy device->host failed for accumulated total contributions", total_error);
+    }
+
+    if (include_surface) {
+        const auto min_surface_error = cudaMemcpy(min_surface_distances.data(), forward_cache.d_min_surface,
+                                                  count * sizeof(float), cudaMemcpyDeviceToHost);
+        if (min_surface_error != cudaSuccess) {
+            return MakeCudaErrorStatus("cudaMemcpy device->host failed for accumulated min surface distances",
+                                       min_surface_error);
+        }
+    }
+
+    return Status::Ok();
+#endif
+}
+
+Status EnsureForwardCacheCapacity(CachedForwardDeviceData& cache, int width, int height, int point_count) {
+    const std::size_t pixel_count = static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
+
+    if (auto s = EnsureDeviceCapacity(cache.d_background, cache.background_capacity, 3, "background"); !s.ok()) {
+        cache.Release();
+        return s;
+    }
+    if (auto s = EnsureDeviceCapacity(cache.d_view, cache.view_capacity, 16, "view"); !s.ok()) {
+        cache.Release();
+        return s;
+    }
+    if (auto s = EnsureDeviceCapacity(cache.d_proj, cache.proj_capacity, 16, "proj"); !s.ok()) {
+        cache.Release();
+        return s;
+    }
+    if (auto s = EnsureDeviceCapacity(cache.d_campos, cache.campos_capacity, 3, "campos"); !s.ok()) {
+        cache.Release();
+        return s;
+    }
+    if (auto s = EnsureDeviceCapacity(cache.d_mask, cache.mask_capacity, pixel_count, "mask"); !s.ok()) {
+        cache.Release();
+        return s;
+    }
+
+    if (auto s = EnsureDeviceCapacity(cache.d_out_color, cache.out_color_capacity, pixel_count * 3, "out_color"); !s.ok()) {
+        cache.Release();
+        return s;
+    }
+    if (auto s = EnsureDeviceCapacity(cache.d_out_depth, cache.out_depth_capacity, pixel_count, "out_depth"); !s.ok()) {
+        cache.Release();
+        return s;
+    }
+    if (auto s = EnsureDeviceCapacity(cache.d_out_invdepth, cache.out_invdepth_capacity, pixel_count, "out_invdepth");
+        !s.ok()) {
+        cache.Release();
+        return s;
+    }
+    if (auto s = EnsureDeviceCapacity(cache.d_radii, cache.radii_capacity, static_cast<std::size_t>(point_count), "radii");
+        !s.ok()) {
+        cache.Release();
+        return s;
+    }
+    if (auto s = EnsureDeviceCapacity(cache.d_gauss_contrib, cache.gauss_contrib_capacity,
+                                      static_cast<std::size_t>(point_count), "gauss_contributions");
+        !s.ok()) {
+        cache.Release();
+        return s;
+    }
+    if (auto s = EnsureDeviceCapacity(cache.d_gauss_surface, cache.gauss_surface_capacity,
+                                      static_cast<std::size_t>(point_count), "gauss_surface_distances");
+        !s.ok()) {
+        cache.Release();
+        return s;
+    }
+    if (auto s = EnsureDeviceCapacity(cache.d_gauss_pixels, cache.gauss_pixels_capacity,
+                                      static_cast<std::size_t>(point_count), "gauss_pixels");
+        !s.ok()) {
+        cache.Release();
+        return s;
+    }
+    if (auto s = EnsureDeviceCapacity(cache.d_best_contrib, cache.best_contrib_capacity,
+                                      static_cast<std::size_t>(point_count), "best_contributions");
+        !s.ok()) {
+        cache.Release();
+        return s;
+    }
+    if (auto s = EnsureDeviceCapacity(cache.d_best_colors, cache.best_colors_capacity,
+                                      static_cast<std::size_t>(point_count) * 3, "best_colors");
+        !s.ok()) {
+        cache.Release();
+        return s;
+    }
+    if (auto s = EnsureDeviceCapacity(cache.d_total_contrib, cache.total_contrib_capacity,
+                                      static_cast<std::size_t>(point_count), "total_contributions");
+        !s.ok()) {
+        cache.Release();
+        return s;
+    }
+    if (auto s = EnsureDeviceCapacity(cache.d_min_surface, cache.min_surface_capacity,
+                                      static_cast<std::size_t>(point_count), "min_surface_distances");
+        !s.ok()) {
+        cache.Release();
+        return s;
+    }
+
+    if (cache.init_surface_host.size() < static_cast<std::size_t>(point_count)) {
+        cache.init_surface_host.assign(static_cast<std::size_t>(point_count), std::numeric_limits<float>::max());
+    }
+
+    return Status::Ok();
 }
 
 } // namespace gs2pc

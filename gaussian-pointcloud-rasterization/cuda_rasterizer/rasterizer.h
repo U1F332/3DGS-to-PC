@@ -58,7 +58,11 @@ namespace CudaRasterizer
 			int* mask,
 			int* radii = nullptr,
 			bool calculate_surface_distance = false,
-			bool debug = false
+			bool debug = false,
+			float* gauss_best_contributions = nullptr,
+			float* gauss_best_colors = nullptr,
+			float* gauss_total_contributions = nullptr,
+			float* gauss_min_surface_distances = nullptr
 		);
 	};
 };
