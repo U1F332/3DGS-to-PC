@@ -172,12 +172,14 @@ Current implemented behavior includes:
 - normal generation or reuse when available
 
 ### `src/exporter/exporter.cpp`
-Responsible for writing point clouds as ASCII PLY.
+Responsible for writing point clouds as PLY.
 
 Current output behavior:
 - always writes vertex positions
 - writes normals when available
 - writes RGB colour as `uchar`
+- supports both binary little-endian and ASCII PLY output; binary is the default
+- accepts an optional `ExportTimings*` pointer to receive per-stage write timings (header, vertices, flush, total)
 
 ### `src/cli/cli.cpp`
 Responsible for command-line parsing and help text.
@@ -192,6 +194,7 @@ The CLI currently exposes options for:
 - colour quality presets
 - image dimensions and diagnostic camera settings
 - enabling mark-visible and forward diagnostic paths
+- PLY export format (`--export_format <binary|ascii>`, default: `binary`)
 
 ### `src/raster/raster.cpp`
 Responsible for optional native CUDA raster integration.
@@ -273,4 +276,14 @@ From the repository root with absolute or relative paths:
 
 At the time this note was written, the native application was successfully configured and built through CMake and Ninja, and the CLI help command executed successfully.
 
-Updated: 2026-03-15
+On a successful run, the CLI prints a stage-level timing breakdown:
+
+```
+Timing breakdown (ms): load_gaussians=<N>, load_cameras=<N>, forward=<N>, convert=<N>, export_total=<N>
+Export I/O detail (ms): header=<N>, vertices=<N>, flush=<N>, total=<N>
+Total processing time: <N> ms
+```
+
+The export format printed in the summary reflects the active `--export_format` setting (`binary` or `ascii`).
+
+Updated: 2026-03-17
