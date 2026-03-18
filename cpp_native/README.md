@@ -1,113 +1,189 @@
-# `cpp_native` detailed notes
+# `cpp_native` (native C++ implementation)
 
-## Overview
+`cpp_native/` is the current native `C++20` pipeline for converting 3D Gaussian scenes (`.ply` / `.splat`) to point clouds.
 
-`cpp_native/` is the native C++20 implementation scaffold for this repository.
+It builds a CLI executable:
+- `gs2pc_cli`
 
-It provides:
-- a reusable library target: `gs2pc_core`
-- a command-line executable: `gs2pc_cli`
-- native loaders for Gaussian `.ply` and `.splat` inputs
-- COLMAP camera loading for text and binary formats
-- point-cloud generation and PLY export
-- optional CUDA raster diagnostic integration
+And an internal library:
+- `gs2pc_core`
 
-This directory is built with CMake and is intended to be configured with the Ninja generator in this workspace.
+---
 
-## Functional consistency with the original implementation
+## What is current (important)
 
-The original implementation in this repository is the Python pipeline centered around `gauss_to_pc.py`.
+Compared with older notes, this native path is now focused on practical production usage:
 
-The current `cpp_native/` implementation now reproduces the main Gaussian-to-point-cloud path much more closely than the earlier native scaffold, especially for colour extraction when CUDA raster support is available.
+- CUDA raster path is **enabled by default** (`GS2PC_ENABLE_CUDA_RASTER=ON`)
+- C++ color extraction is aligned with the repository Python+CUDA behavior (precomputed color path)
+- CUDA forward path now uses persistent GPU caches
+- Per-Gaussian color/contribution statistics are accumulated on GPU and pulled back once
+- PLY export is now **binary by default** (ASCII still available)
+- CLI prints stage timing breakdowns
+- Build automatically creates a portable `dist/` output directory
 
-### Areas that are already broadly aligned
-- Both paths target conversion from Gaussian scene data to exported point clouds.
-- Both paths accept Gaussian `.ply` and `.splat` style inputs.
-- Both paths include support for COLMAP-derived camera data.
-- Both paths expose controls related to point count, opacity filtering, bounding box filtering, SH-related settings, and visibility-oriented options.
-- Both paths can write point-cloud PLY output.
-- Both paths can now use camera-driven colour extraction rather than relying only on static stored Gaussian colour.
+---
 
-### Current colour extraction behavior in `cpp_native/`
-- When CUDA raster support is available and a transform path is provided, `gs2pc_cli` now automatically uses the CUDA forward raster path as the main colour extraction path.
-- In that mode, the native path:
-  - loads COLMAP camera frames
-  - passes Gaussian SH coefficients into the CUDA rasterizer when available
-  - renders across all available camera frames
-  - tracks per-Gaussian maximum contribution values
-  - records the best contributing pixel for each Gaussian
-  - writes the selected rendered colour back to the Gaussian before point-cloud export
-- This is much closer to the original repository behavior than the earlier native SH-view averaging fallback.
-- If CUDA raster support is unavailable, the native path falls back to a camera-aware SH colour averaging path instead of failing silently.
+## Changes since `6792c6f0`
 
-### Areas where `cpp_native/` now has strong practical alignment
-- Native loading and parsing of Gaussian PLY and SPLAT data are in good shape.
-- COLMAP camera loading is implemented for both text and binary formats.
-- Point sampling and point-cloud export are operational and stable.
-- CUDA forward output parsing is integrated into the native main flow rather than being limited to a standalone diagnostic-only path.
-- Render-driven colour extraction is now part of the native main workflow when CUDA is enabled.
+Major updates after `6792c6f0` include:
 
-### Areas where differences may still remain
-- The Python path still remains the fuller reference implementation for the entire repository feature set.
-- Mask loading and mask-driven colour extraction are not yet fully mirrored in the native path.
-- Mesh generation and point-cloud post-processing utilities from the Python workflow are not yet fully reproduced in native code.
-- Some edge-case differences may still exist in visibility filtering, surface-distance handling, threshold semantics, or floating-point accumulation details.
-- Exact equivalence should still be treated as a result to verify empirically on the same dataset rather than assumed purely from implementation intent.
+1. **Color alignment and parity improvements**
+   - Native forward color path aligned to Python+CUDA output behavior.
+   - Export channel conversion behavior adjusted for closer parity.
 
-### Practical assessment
-- Input compatibility: good
-- CLI surface compatibility: good
-- Native loading and export coverage: good
-- Rendering parity with the Python pipeline: high when CUDA forward is enabled
-- Mesh and post-processing parity: not yet achieved
-- Overall Gaussian-to-point-cloud parity for the main conversion path: high
+2. **CUDA raster performance work**
+   - Persistent GPU caches for Gaussian static data and frame buffers.
+   - GPU-side accumulation for best contribution color, total contribution, and min surface distance.
+   - Reduced per-frame host transfers and synchronization overhead.
 
-### Conclusion
+3. **Packaging / deployment flow**
+   - Default CUDA-enabled build configuration.
+   - Build now installs runtime dependencies into `dist/` automatically.
 
-`cpp_native/` is no longer only a minimal native scaffold for the core conversion path.
+4. **Export and timing updates**
+   - Default export format changed to binary PLY.
+   - New `--export_format binary|ascii` option.
+   - Detailed timing output for key stages and export I/O sub-stages.
 
-For the main use case of converting Gaussians into a dense point cloud with camera-driven colour extraction, the native implementation is now much closer to the original repository behavior, especially when built with CUDA raster support enabled.
+---
 
-The Python implementation still remains the broader reference for auxiliary features such as masking, meshing, and some higher-level processing details, but the core native conversion path is now substantially aligned.
+## Build (important: use x64 Native Tools command prompt)
 
-## Build directory convention
+> No IDE UI is required, but you **must** use the correct x64 toolchain shell.
 
-The build directory for this native component should be named `build`.
+### Requirements
 
-Recommended configure command:
+1. `CMake` >= 3.8
+2. `Ninja`
+3. Visual Studio 2022 C++ build tools
+4. **Run commands in `x64 Native Tools Command Prompt for VS 2022`**
+5. For CUDA build: CUDA Toolkit + compatible NVIDIA driver
 
-- `cmake -S . -B build -G Ninja`
+If you do not use the x64 Native Tools shell, you may hit mixed-arch linker errors such as `LNK4272` (`x86` libraries linked into an `x64` target).
 
-Recommended build command:
+### Presets (current)
 
-- `cmake --build build`
+- `x64-release` = CUDA OFF (CPU-only build)
+- `x64-release-cuda` = CUDA ON (native CUDA raster path enabled)
 
-In this repository, using a directory such as `build_ninja` is unnecessary because the generator is already explicitly selected by `-G Ninja`.
+### CUDA ON vs CUDA OFF
 
-## Why the IDE solution-wide build command is not the right path here
+#### `x64-release-cuda` (recommended)
+- Enables native CUDA raster integration
+- Uses GPU-based contribution/color extraction path
+- Best parity and performance for the current pipeline
 
-This native component is a standalone CMake project rooted at `cpp_native/CMakeLists.txt`.
+#### `x64-release`
+- Builds without CUDA raster support
+- CUDA diagnostic paths are unavailable (`--run_forward`, `--run_mark_visible`)
+- Basic conversion still works, but color/performance path differs
 
-That means the expected build flow is:
-- configure with CMake
-- generate Ninja files
-- build through CMake or Ninja
+### Command-line build (from `cpp_native/`)
 
-So the correct command path is based on CMake, for example:
-- `cmake -S C:/WS/Test/3DGS-to-PC/cpp_native -B C:/WS/Test/3DGS-to-PC/cpp_native/build -G Ninja`
-- `cmake --build C:/WS/Test/3DGS-to-PC/cpp_native/build`
+#### CUDA ON
 
-## Toolchain and language settings
+```bash
+cmake --preset x64-release-cuda
+cmake --build --preset x64-release-cuda
+```
 
-Current native project settings:
-- minimum CMake version: `3.8`
-- configured CMake range in `cpp_native/CMakeLists.txt`: `3.8...3.31`
-- language standard: `C++20`
-- generator used in this workspace: `Ninja`
+#### CUDA OFF
+
+```bash
+cmake --preset x64-release
+cmake --build --preset x64-release
+```
+
+#### Clean rebuild (recommended when switching modes)
+
+```bash
+cmake --build --preset x64-release-cuda --clean-first
+cmake --build --preset x64-release --clean-first
+```
+
+### Build output directories
+
+- CUDA ON: `cpp_native/build_cuda_x64_release/dist/`
+- CUDA OFF: `cpp_native/build_x64_release/dist/`
+
+`dist/` contains `gs2pc_cli` and discovered runtime dependencies for portable execution.
+
+---
+
+## Output layout and portable build
+
+After build, runtime files are installed into the active preset's `dist/` folder (for example `build_cuda_x64_release/dist` or `build_x64_release/dist`).
+
+This includes:
+- `gs2pc_cli` executable
+- required runtime DLLs (where discoverable)
+- CUDA runtime DLL copy for enabled CUDA builds (if found)
+
+`gs2pc_dist` is part of default build (`ALL`), so normal build already prepares `dist/`.
+
+---
+
+## Basic usage
+
+```bash
+cpp_native/build/dist/gs2pc_cli --input_path <scene.ply|scene.splat> --output_path out.ply
+```
+
+With camera transforms for render-driven colors:
+
+```bash
+cpp_native/build/dist/gs2pc_cli \
+  --input_path <scene.ply> \
+  --transform_path <colmap_sparse_or_transforms> \
+  --output_path out.ply
+```
+
+Choose export format:
+
+```bash
+--export_format binary   # default
+--export_format ascii
+```
+
+Useful options:
+- `--num_points <int>`
+- `--colour_quality tiny|low|medium|high|ultra|original`
+- `--visibility_threshold <float>`
+- `--surface_distance_std <float>`
+- `--mahalanobis_distance_std <float>`
+- `--min_opacity <float>`
+- `--cull_gaussian_sizes <float>`
+- `--no_render_colours`
+- `--quiet`
+
+Full option list:
+
+```bash
+gs2pc_cli --help
+```
+
+---
+
+## Timing output
+
+Current CLI output includes:
+
+- `load_gaussians`
+- `load_cameras`
+- `forward`
+- `convert`
+- `export_total`
+- export I/O details: `header`, `vertices`, `flush`, `total`
+- overall: `Total processing time`
+
+This is intended to quickly locate bottlenecks (compute vs I/O).
+
+---
 
 ## Current source layout
 
-### Public headers
+Headers:
 - `include/gs2pc/config.h`
 - `include/gs2pc/types.h`
 - `include/gs2pc/io.h`
@@ -116,7 +192,7 @@ Current native project settings:
 - `include/gs2pc/exporter.h`
 - `include/gs2pc/raster.h`
 
-### Source files
+Sources:
 - `src/cli/cli.cpp`
 - `src/cli/main.cpp`
 - `src/io/io.cpp`
@@ -125,152 +201,9 @@ Current native project settings:
 - `src/exporter/exporter.cpp`
 - `src/raster/raster.cpp`
 
-## What each part currently does
+---
 
-### `src/io/io.cpp`
-Responsible for reading Gaussian input data.
+## Notes
 
-Current implemented support:
-- binary `.splat`
-- ASCII PLY
-- binary little-endian PLY
-
-It detects whether a PLY file is:
-- a point-cloud PLY
-- a Gaussian-style PLY
-
-The loader reads practical attributes when present, including:
-- position
-- normals
-- RGB colour
-- opacity
-- Gaussian scales
-- quaternion rotation
-- SH DC terms and additional SH coefficients
-
-### `src/camera/camera_loader.cpp`
-Responsible for camera loading.
-
-Current implemented support:
-- `cameras.txt`
-- `images.txt`
-- `cameras.bin`
-- `images.bin`
-
-This is intended for COLMAP camera and image metadata loading.
-
-### `src/converter/converter.cpp`
-Responsible for converting loaded Gaussians into a point cloud.
-
-Current implemented behavior includes:
-- filtering by minimum opacity
-- filtering by bounding box
-- culling a percentage of the largest Gaussians
-- distributing target point counts across selected Gaussians
-- exact and non-exact point count distribution modes
-- Gaussian sampling using rotation and scale
-- normal generation or reuse when available
-
-### `src/exporter/exporter.cpp`
-Responsible for writing point clouds as ASCII PLY.
-
-Current output behavior:
-- always writes vertex positions
-- writes normals when available
-- writes RGB colour as `uchar`
-
-### `src/cli/cli.cpp`
-Responsible for command-line parsing and help text.
-
-The CLI currently exposes options for:
-- input and output paths
-- transform and mask paths
-- target point count
-- visibility and surface-distance thresholds
-- opacity and size filtering
-- SH degree
-- colour quality presets
-- image dimensions and diagnostic camera settings
-- enabling mark-visible and forward diagnostic paths
-
-### `src/raster/raster.cpp`
-Responsible for optional native CUDA raster integration.
-
-Important behavior:
-- when CUDA raster support is disabled, diagnostic functions return a not-implemented status
-- when enabled, the code can call native `markVisible` and forward raster paths
-- CUDA support is controlled through `GS2PC_ENABLE_CUDA_RASTER`
-
-## Build targets
-
-Defined targets in `cpp_native/CMakeLists.txt`:
-- `gs2pc_core`
-- `gs2pc_cli`
-
-Optional formatting target:
-- `gs2pc_format`
-
-The formatting target is only created when `clang-format` is found.
-
-## Optional CUDA support
-
-CUDA raster support is disabled by default.
-
-Relevant CMake options:
-- `GS2PC_ENABLE_CUDA_RASTER=ON|OFF`
-- `GS2PC_CUDA_MIN_SM`
-- `GS2PC_FORCE_MIN_CUDA_ARCH=ON|OFF`
-
-Important behavior:
-- when CUDA raster support is enabled successfully, `gs2pc_cli` can use CUDA forward rendering as the main colour extraction path when camera transforms are provided
-- the native raster path now supports passing SH coefficients into the CUDA rasterizer instead of relying only on precomputed colours
-- if CUDA is unavailable, the project still builds, but the native converter falls back to non-CUDA behavior
-
-Example configure command with CUDA raster enabled:
-- `cmake -S . -B build_cuda_x64 -G Ninja -DGS2PC_ENABLE_CUDA_RASTER=ON`
-
-## Example commands
-
-From inside `cpp_native/`:
-
-- configure:
-  - `cmake -S . -B build -G Ninja`
-- build:
-  - `cmake --build build`
-- show CLI help:
-  - `build/gs2pc_cli.exe --help`
-- run CUDA forward colour extraction on the bundled dataset layout:
-  - `run_set_cuda_forward_test.cmd`
-
-### Using `CMakePresets.json` in an IDE
-
-`cpp_native/` now includes a `CMakePresets.json` file for IDE-friendly configuration.
-
-Available configure presets:
-- `x64-release`
-- `x64-release-cuda`
-
-Available build presets:
-- `x64-release`
-- `x64-release-cuda`
-
-Recommended IDE workflow:
-- open `cpp_native/` as the CMake project root
-- select the `x64-release-cuda` preset when CUDA raster support is desired
-- select the `x64-release` preset when a non-CUDA native build is preferred
-- configure and build directly from the IDE using the selected preset
-
-Equivalent command-line usage:
-- `cmake --preset x64-release-cuda`
-- `cmake --build --preset x64-release-cuda`
-
-From the repository root with absolute or relative paths:
-
-- `cmake -S 3DGS-to-PC/cpp_native -B 3DGS-to-PC/cpp_native/build -G Ninja`
-- `cmake --build 3DGS-to-PC/cpp_native/build`
-
-## Current practical status
-
-At the time this note was written, the native application was successfully configured and built through CMake and Ninja, and the CLI help command executed successfully.
-
-Updated: 2026-03-15
+- Python remains the broader reference for all auxiliary features.
+- Native main conversion path is now high-parity for practical Gaussian-to-point-cloud workflows, especially with CUDA enabled.
